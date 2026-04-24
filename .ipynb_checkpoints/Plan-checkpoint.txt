@@ -1,0 +1,39 @@
+SuperNEMO
+    Source foils
+    Tracking detector
+    Calorimetric walls
+    Calibration system
+
+Study of detection efficiency
+    Calibration sources
+        activities and other characteristics and copper frame
+    Data type and selection
+        explaining data from Yaroslava  
+        and calibration time and other
+    Calibration method
+        explaining Filip's work and calibration module
+        energy plots
+    Design of event
+        data preparation and processing, 2 walls
+        scheme how events in this research look like 
+            what information we need about them and why
+        end_X plots (why it looks like there and ho electron did it)
+        bi_sources
+            new source positions
+        source maps
+            how looks like data for our study
+            why we have such plots with white blocks
+    Registration efficiency
+        talk about what efficiency means and how we may measure it
+        (+dead_time 0)
+        geometric aspect
+            geometry has main impact on efficiency
+            elif's work
+        main contributors of efficiency innacuracy (bi sources blocks, physics)
+    Results
+        Comparison theoretical and experimental values
+        explanation of differences
+            eps_residual
+        possible categories of influence on efficiency discrepancy
+
+Conclusions
