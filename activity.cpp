@@ -193,10 +193,6 @@ static const char* modeSuffix(DisplayMode mode) {
 // ============================================================
 //  draw_efficiencies
 //  — малює карти ефективностей реєстрації
-//  — НОВІ параметри: effRootFile, effRootMode
-//      effRootFile  — ім'я ROOT-файлу для збереження ефективностей
-//                     (порожній рядок = не зберігати)
-//      effRootMode  — "RECREATE" або "UPDATE"
 // ============================================================
 
 void draw_efficiencies(
@@ -215,7 +211,6 @@ void draw_efficiencies(
     gSystem->mkdir("plots",              true);
     gSystem->mkdir("plots/efficiencies", true);
 
-    // ── Відкриваємо вхідний ROOT-файл з hits ───────────────────────────
     TFile* f = TFile::Open(rootFile.c_str(), "READ");
     if (!f || f->IsZombie()) {
         std::cerr << "draw_efficiencies: cannot open " << rootFile << "\n"; return;
@@ -233,8 +228,6 @@ void draw_efficiencies(
     const int nSources = (int)src_pos.size();
     const int nOMs     = (int)om_pos.size();
 
-    // ── Відкриваємо вихідний ROOT-файл для ефективностей ───────────────
-    //    Відкриваємо один раз тут, щоб записати всі гістограми разом.
     TFile* fEff = nullptr;
     if (!effRootFile.empty()) {
         fEff = TFile::Open(effRootFile.c_str(), effRootMode.c_str());
@@ -248,7 +241,6 @@ void draw_efficiencies(
         }
     }
 
-    // ── Допоміжні лямбди ───────────────────────────────────────────────
     auto dedup = [](std::vector<double> v) -> std::vector<double> {
         std::sort(v.begin(), v.end());
         std::vector<double> out;
@@ -276,7 +268,6 @@ void draw_efficiencies(
         return best;
     };
 
-    // ── Побудова сіток координат ────────────────────────────────────────
     std::vector<double> raw_z;
     for (auto& p : om_pos) raw_z.push_back(p.second);
     std::vector<double> uZ = dedup(raw_z);
@@ -307,7 +298,6 @@ void draw_efficiencies(
         { hSourceOM_neg, &uY_neg, stepY_neg,  0, "neg", "Italian side (X<0)", false }
     };
 
-    // ── Головний цикл ───────────────────────────────────────────────────
     for (int si = 0; si < 2; si++) {
         Side& sd = sides[si];
 
@@ -323,9 +313,8 @@ void draw_efficiencies(
                 if (r.number == s) { N_true = r.N_true; break; }
             if (N_true <= 0.0) continue;
 
-            // Обчислюємо ефективності
             std::vector<int>    om_ci(nOMs, -1), om_ri(nOMs, -1);
-            std::vector<double> om_eps(nOMs, 0.0);  // у %
+            std::vector<double> om_eps(nOMs, 0.0);
 
             for (int om = 0; om < nOMs; om++) {
                 double hits = sd.matrix->GetBinContent(s + 1, om + 1);
@@ -340,13 +329,6 @@ void draw_efficiencies(
                 om_eps[om] = eps;
             }
 
-            // ── ЗБЕРЕЖЕННЯ ЕФЕКТИВНОСТЕЙ У ROOT-ФАЙЛ ───────────────────
-            //
-            //    Назва гістограми: "eff_<side>_src<NN>"
-            //    Осі: X = column index у сітці OM (0..nCols-1)
-            //         Y = row index у сітці OM   (0..nRows-1)
-            //    Вміст bin: eps_registration [%]
-            //
             if (fEff) {
                 fEff->cd();
                 TH2F* hEff = new TH2F(
@@ -356,19 +338,14 @@ void draw_efficiencies(
                     nCols, colMin - 0.5, colMax + 0.5,
                     nRows, rowMin - 0.5, rowMax + 0.5);
                 hEff->SetDirectory(fEff);
-
                 for (int om = 0; om < nOMs; om++) {
                     int ci = om_ci[om];
                     int ri = om_ri[om];
                     if (ci < 0 || ri < 0 || om_eps[om] <= 0.0) continue;
-                    // bin-індекси ROOT: 1-based
                     hEff->SetBinContent(ci + 1, ri + 1, om_eps[om]);
                 }
                 hEff->Write("", TObject::kOverwrite);
-                // не delete — файл забере ownership через SetDirectory(fEff)
             }
-
-            // ── ВІЗУАЛІЗАЦІЯ (без змін відносно оригіналу) ─────────────
 
             double sy_raw = sd.isPos ? -src_pos[s].first : src_pos[s].first;
             double sz_raw = src_pos[s].second;
@@ -438,16 +415,14 @@ void draw_efficiencies(
             const double cellW = 0.46, cellH = 0.46;
             const int nColors = TColor::GetNumberOfColors();
 
-            // ПРОХІД 1: кольорові комірки
+            // PASS 1: colored cells
             for (int om = 0; om < nOMs; om++) {
                 int ci = om_ci[om], ri = om_ri[om];
                 if (ci < 0 || ri < 0 || om_eps[om] <= 0.0) continue;
-
                 double v    = displayValue(om_eps[om], dispMode);
                 double frac = (v - vMin) / (vMax - vMin);
                 frac = std::max(0.0, std::min(1.0, frac));
                 int colorIdx = TColor::GetColorPalette((int)(frac * (nColors - 1)));
-
                 TBox* b = new TBox(
                     colMin+ci-cellW, ri-cellH, colMin+ci+cellW, ri+cellH);
                 b->SetFillColor(colorIdx);
@@ -455,7 +430,7 @@ void draw_efficiencies(
                 b->Draw("l same");
             }
 
-            // ПРОХІД 2: сітка
+            // PASS 2: grid
             for (int ic = 0; ic <= nCols; ic++) {
                 TLine* l = new TLine(colMin-0.5+ic, rowMin-0.5,
                                      colMin-0.5+ic, rowMax+0.5);
@@ -469,7 +444,7 @@ void draw_efficiencies(
                 l->Draw("same");
             }
 
-            // ПРОХІД 3: зелені рамки (5x5)
+            // PASS 3: 5×5 green borders
             for (int om = 0; om < nOMs; om++) {
                 int ci = om_ci[om], ri = om_ri[om];
                 if (ci < 0 || ri < 0 || om_eps[om] <= 0.0) continue;
@@ -481,12 +456,11 @@ void draw_efficiencies(
                 border->Draw("same");
             }
 
-            // ПРОХІД 4: маркери джерел
+            // PASS 4: source markers
             for (int i = 0; i < nSources; i++) {
                 double sy_i = sd.isPos ? -src_pos[i].first : src_pos[i].first;
                 double sz_i = src_pos[i].second;
 
-                // інтерполяція позиції
                 const auto& uY = *sd.uY;
                 int ci0 = 0;
                 for (int k = 0; k+1 < (int)uY.size(); k++) {
@@ -524,15 +498,13 @@ void draw_efficiencies(
                 lbl->Draw("same");
             }
 
-            // ПРОХІД 5: числові підписи
+            // PASS 5: numeric labels
             for (int om = 0; om < nOMs; om++) {
                 int ci = om_ci[om], ri = om_ri[om];
                 if (ci < 0 || ri < 0 || om_eps[om] <= 0.0) continue;
-
                 double v    = displayValue(om_eps[om], dispMode);
                 double frac = (v - vMin) / (vMax - vMin);
                 frac = std::max(0.0, std::min(1.0, frac));
-
                 std::string lbl = displayLabel(om_eps[om], dispMode);
                 TLatex* lt = new TLatex(colMin+ci, ri, lbl.c_str());
                 lt->SetTextAlign(22); lt->SetTextSize(0.03);
@@ -540,13 +512,11 @@ void draw_efficiencies(
                 lt->Draw("same");
             }
 
-            // Заголовок
             TLatex ttl;
             ttl.SetNDC(); ttl.SetTextAlign(22); ttl.SetTextSize(0.038);
             ttl.DrawLatex(0.5*(1.0-mR+mL), 0.965,
                 Form("Source %d  |  %s", s, sd.title));
 
-            // Інфопанель
             const double infoX1 = 1.0 - mR + 0.015;
             TPaveText* pvInfo = new TPaveText(infoX1, 0.72, 0.995, 0.91, "NDC");
             pvInfo->SetFillColor(kWhite); pvInfo->SetBorderSize(1);
@@ -563,10 +533,9 @@ void draw_efficiencies(
                            sd.name, s, modeSuffix(dispMode)));
             delete hFrame;
             delete c;
-        }  // end source loop
-    }  // end side loop
+        }
+    }
 
-    // Закриваємо eff ROOT-файл
     if (fEff) {
         fEff->Close();
         std::cout << "✓ Registration efficiencies saved to: " << effRootFile << "\n";
@@ -576,6 +545,423 @@ void draw_efficiencies(
 
     std::cout << "Efficiency maps saved to plots/efficiencies/\n";
 }
+
+
+// ============================================================
+//  draw_efficiencies_GID
+//
+//  Аналог draw_efficiencies, проте використовує гістограми
+//  hSrcGID_pos_%02d / hSrcGID_neg_%02d з vertex_energy_results.root.
+//  Ці гістограми заповнює visu_root.C за значеннями GID wall і col:
+//
+//    X-вісь (wall bin 0..nWalls-1):
+//      Italian side: wall 0 зліва, wall 19 справа (пряме заповнення)
+//      French  side: wall 19 зліва, wall 0 справа (bin = nWalls-1-gid_wall)
+//                    підписи показують реальний номер wall
+//    Y-вісь (col bin 0..nRows-1): col 0 знизу, незалежно від сторони
+//
+//  Результати зберігаються в plots/efficiencies_GID/
+//  і (опційно) у eff_GID_pos_src<NN> / eff_GID_neg_src<NN> у ROOT-файлі.
+// ============================================================
+
+void draw_efficiencies_GID(
+    const std::vector<SourceResult>&             results,
+    const std::vector<std::pair<double,double>>& src_pos,
+    const std::vector<std::pair<double,double>>& om_positions,
+    const std::string&                           rootFile        = "vertex_energy_results.root",
+    bool                                         use5x5          = false,
+    DisplayMode                                  dispMode        = DisplayMode::LOG10,
+    double                                       electron_intens = 1.0,
+    int                                          nWalls_gid      = 20,
+    int                                          nRows_gid       = 13,
+    const std::string&                           effRootFile     = "activity_results.root",
+    const std::string&                           effRootMode     = "UPDATE")
+{
+    gROOT->SetBatch(true);
+    gStyle->SetPalette(kBird);
+    gSystem->mkdir("plots",                  true);
+    gSystem->mkdir("plots/efficiencies_GID", true);
+
+    const int nSources = (int)src_pos.size();
+    const int nCols    = nWalls_gid;
+    const int nRows    = nRows_gid;
+
+    // ── Відкриваємо вхідний ROOT-файл ──────────────────────────────────
+    TFile* f = TFile::Open(rootFile.c_str(), "READ");
+    if (!f || f->IsZombie()) {
+        std::cerr << "draw_efficiencies_GID: cannot open " << rootFile << "\n";
+        return;
+    }
+
+    // Перевіряємо наявність GID гістограм
+    if (!f->Get("hSrcGID_pos_00")) {
+        std::cerr << "draw_efficiencies_GID: hSrcGID_pos_00 not found in "
+                  << rootFile << "\n"
+                  << "  Hint: re-run visu_root() to generate GID histograms.\n";
+        f->Close(); return;
+    }
+
+    // Завантажуємо всі GID гістограми в пам'ять і закриваємо файл
+    std::vector<TH2F*> hGID_pos(nSources, nullptr), hGID_neg(nSources, nullptr);
+    for (int s = 0; s < nSources; s++) {
+        hGID_pos[s] = (TH2F*)f->Get(Form("hSrcGID_pos_%02d", s));
+        hGID_neg[s] = (TH2F*)f->Get(Form("hSrcGID_neg_%02d", s));
+        if (hGID_pos[s]) hGID_pos[s]->SetDirectory(0);
+        if (hGID_neg[s]) hGID_neg[s]->SetDirectory(0);
+    }
+    f->Close();
+
+    // ── Координатна сітка OM для маркерів джерел ───────────────────────
+    //
+    // Опис відображення wall -> display bin:
+    //   Italian: uY_neg[i] (зростаючий Y) відповідає wall i
+    //            => display_bin = nearest_idx(uY_neg, src_y) = wall_idx
+    //   French:  fill відбувається як (nWalls-1 - gid_wall)
+    //            => uY_pos[i] відповідає wall i (wall 0 = найбільший Y)
+    //            => display_bin = nWalls-1 - nearest_idx(uY_pos, -src_y)
+    //
+    // Детально: у visu_root.C уY_pos sorted ascending = найменший -Y
+    //           перший. Найменший -Y = найбільший +Y = wall 0 для French.
+    //           Тому nearest_idx(uY_pos, -src_y) = wall_idx для French,
+    //           а display_bin = nCols-1 - wall_idx.
+
+    auto dedup_v = [](std::vector<double> v) -> std::vector<double> {
+        std::sort(v.begin(), v.end());
+        std::vector<double> out; out.push_back(v[0]);
+        for (size_t i = 1; i < v.size(); i++)
+            if (std::abs(v[i] - out.back()) > 1.0) out.push_back(v[i]);
+        return out;
+    };
+
+    std::vector<double> uY_neg, uY_pos, uZ_gid;
+    for (auto& p : om_positions) {
+        uY_neg.push_back( p.first);
+        uY_pos.push_back(-p.first);
+        uZ_gid.push_back( p.second);
+    }
+    uY_neg = dedup_v(uY_neg);
+    uY_pos = dedup_v(uY_pos);
+    uZ_gid = dedup_v(uZ_gid);
+
+    // ── Відкриваємо вихідний ROOT-файл ─────────────────────────────────
+    TFile* fEff = nullptr;
+    if (!effRootFile.empty()) {
+        fEff = TFile::Open(effRootFile.c_str(), effRootMode.c_str());
+        if (!fEff || fEff->IsZombie()) {
+            std::cerr << "WARNING: cannot open " << effRootFile
+                      << " for GID efficiencies — skipping ROOT output\n";
+            fEff = nullptr;
+        } else {
+            std::cout << "GID efficiency ROOT output: " << effRootFile
+                      << " (mode=" << effRootMode << ")\n";
+        }
+    }
+
+    // ── Параметри сторін ────────────────────────────────────────────────
+    struct SideGID {
+        bool                       isPos;
+        const char*                name;
+        const char*                title;
+        const std::vector<TH2F*>*  hists;
+        const std::vector<double>* uY;    // для конвертації позиції джерела
+    } sides[2] = {
+        { true,  "pos", "French side (X>0)",  &hGID_pos, &uY_pos },
+        { false, "neg", "Italian side (X<0)", &hGID_neg, &uY_neg }
+    };
+
+    const int colMin = 0, colMax = nCols - 1;
+    const int rowMin = 0, rowMax = nRows - 1;
+
+    // Canvas з пропорціями, що зберігають aspect ratio сітки
+    const double mL = 0.08, mR = 0.30, mT = 0.09, mB = 0.10;
+    const int    baseH   = 600;
+    const double areaH   = baseH * (1.0 - mT - mB);
+    const double areaW   = areaH * (double)nCols / (double)nRows;
+    const int    canvasW = (int)(areaW / (1.0 - mL - mR)) + 1;
+
+    for (int si = 0; si < 2; si++) {
+        SideGID& sd = sides[si];
+
+        for (int s = 0; s < nSources; s++) {
+            TH2F* h = (*sd.hists)[s];
+            if (!h) continue;
+
+            double N_true = 0.0;
+            for (auto& r : results)
+                if (r.number == s) { N_true = r.N_true; break; }
+            if (N_true <= 0.0) continue;
+
+            // ── Ефективність per (wall_bin, col_bin) ───────────────────
+            // wall_bin — індекс бін X у гістограмі (0..nCols-1)
+            // col_bin  — індекс бін Y (0..nRows-1)
+            std::vector<std::vector<double>> eps(nCols, std::vector<double>(nRows, 0.0));
+            for (int ix = 0; ix < nCols; ix++)
+                for (int iy = 0; iy < nRows; iy++) {
+                    double hits = h->GetBinContent(ix + 1, iy + 1);
+                    if (hits > 0)
+                        eps[ix][iy] = (hits / (N_true * electron_intens)) * 100.0;
+                }
+
+            // ── Позиція джерела у display-координатах ──────────────────
+            // Для Italian: wall_idx = nearest_idx(uY_neg, src_y),
+            //              display_bin = wall_idx
+            // Для French:  wall_idx = nearest_idx(uY_pos, -src_y),
+            //              display_bin = nCols-1 - wall_idx
+            {
+                // (src_wall_disp використовується лише для in5x5)
+            }
+            double src_y_search = sd.isPos ? -src_pos[s].first : src_pos[s].first;
+
+            auto nearest_idx_l = [](const std::vector<double>& v, double val) -> int {
+                int best = 0; double bd = std::abs(v[0] - val);
+                for (int i = 1; i < (int)v.size(); i++) {
+                    double dd = std::abs(v[i] - val);
+                    if (dd < bd) { bd = dd; best = i; }
+                }
+                return best;
+            };
+
+            int wall_idx = nearest_idx_l(*sd.uY, src_y_search);
+            int src_wall_disp = sd.isPos ? (nCols - 1 - wall_idx) : wall_idx;
+            int src_col_disp  = nearest_idx_l(uZ_gid, src_pos[s].second);
+
+            auto in5x5 = [&](int wall_bin, int col_bin) -> bool {
+                if (!use5x5) return true;
+                return (std::abs(wall_bin - src_wall_disp) <= 2 &&
+                        std::abs(col_bin  - src_col_disp)  <= 2);
+            };
+
+            // ── eps_total ───────────────────────────────────────────────
+            double eps_total = 0.0;
+            for (int ix = 0; ix < nCols; ix++)
+                for (int iy = 0; iy < nRows; iy++)
+                    if (eps[ix][iy] > 0.0 && in5x5(ix, iy))
+                        eps_total += eps[ix][iy];
+
+            // ── Діапазон displayValue ───────────────────────────────────
+            double vMin = 1e30, vMax = -1e30;
+            for (int ix = 0; ix < nCols; ix++)
+                for (int iy = 0; iy < nRows; iy++) {
+                    if (eps[ix][iy] <= 0.0) continue;
+                    double v = displayValue(eps[ix][iy], dispMode);
+                    if (v < vMin) vMin = v;
+                    if (v > vMax) vMax = v;
+                }
+            if (vMin > vMax) { vMin = 0.0; vMax = 1.0; }
+            if (std::abs(vMax - vMin) < 1e-12) vMax = vMin + 1.0;
+
+            // ── Збереження у ROOT-файл ──────────────────────────────────
+            if (fEff) {
+                fEff->cd();
+                TH2F* hEff = new TH2F(
+                    Form("eff_GID_%s_src%02d", sd.name, s),
+                    Form("GID registration efficiency; %s; source %d; wall bin; col",
+                         sd.title, s),
+                    nCols, colMin - 0.5, colMax + 0.5,
+                    nRows, rowMin - 0.5, rowMax + 0.5);
+                hEff->SetDirectory(fEff);
+                for (int ix = 0; ix < nCols; ix++)
+                    for (int iy = 0; iy < nRows; iy++)
+                        if (eps[ix][iy] > 0.0)
+                            hEff->SetBinContent(ix + 1, iy + 1, eps[ix][iy]);
+                hEff->Write("", TObject::kOverwrite);
+            }
+
+            // ── Canvas + рамка ─────────────────────────────────────────
+            TCanvas* c = new TCanvas(Form("cEffGID_%d_%d", si, s), "",
+                                     canvasW, baseH);
+            c->SetLeftMargin(mL); c->SetRightMargin(mR);
+            c->SetTopMargin(mT);  c->SetBottomMargin(mB);
+
+            TH2F* hFrame = new TH2F(
+                Form("hFrameGID_%d_%d", si, s), "",
+                nCols, colMin - 0.5, colMax + 0.5,
+                nRows, rowMin - 0.5, rowMax + 0.5);
+            hFrame->SetDirectory(0);
+            hFrame->SetStats(0);
+            hFrame->GetXaxis()->SetNdivisions(nCols, false);
+            hFrame->GetYaxis()->SetNdivisions(nRows, false);
+            hFrame->GetXaxis()->SetLabelSize(0.048);
+            hFrame->GetYaxis()->SetLabelSize(0.048);
+            hFrame->GetXaxis()->SetTickLength(0.01);
+            hFrame->GetYaxis()->SetTickLength(0.01);
+
+            // Підписи по X: для French — реальний wall (bin 0 = wall 19, bin 19 = wall 0)
+            for (int ic = 0; ic < nCols; ic++) {
+                int wall_label = sd.isPos ? (nCols - 1 - ic) : ic;
+                hFrame->GetXaxis()->SetBinLabel(ic + 1, Form("%d", wall_label));
+            }
+            for (int ir = 0; ir < nRows; ir++)
+                hFrame->GetYaxis()->SetBinLabel(ir + 1, Form("%d", ir));
+            hFrame->GetXaxis()->SetTitle("Wall");
+            hFrame->GetYaxis()->SetTitle("Col");
+            hFrame->Draw("AXIS");
+
+            // 5×5 підсвітка
+            if (use5x5) {
+                int c0 = std::max(0, src_wall_disp - 2), c1 = std::min(nCols-1, src_wall_disp+2);
+                int r0 = std::max(0, src_col_disp  - 2), r1 = std::min(nRows-1, src_col_disp +2);
+                TBox* box5 = new TBox(c0-0.5, r0-0.5, c1+0.5, r1+0.5);
+                box5->SetFillColorAlpha(kYellow, 0.25);
+                box5->SetLineColor(kOrange+1); box5->SetLineWidth(2);
+                box5->Draw("same");
+            }
+
+            const double cellW  = 0.46, cellH = 0.46;
+            const int    nClrs  = TColor::GetNumberOfColors();
+
+            // ПРОХІД 1: кольорові комірки
+            for (int ix = 0; ix < nCols; ix++) {
+                for (int iy = 0; iy < nRows; iy++) {
+                    if (eps[ix][iy] <= 0.0) continue;
+                    double v    = displayValue(eps[ix][iy], dispMode);
+                    double frac = std::max(0.0, std::min(1.0,
+                                      (v - vMin) / (vMax - vMin)));
+                    int colorIdx = TColor::GetColorPalette((int)(frac * (nClrs - 1)));
+                    TBox* b = new TBox(ix - cellW, iy - cellH, ix + cellW, iy + cellH);
+                    b->SetFillColor(colorIdx);
+                    b->SetLineColor(kGray+2); b->SetLineWidth(1);
+                    b->Draw("l same");
+                }
+            }
+
+            // ПРОХІД 2: сітка
+            for (int ic = 0; ic <= nCols; ic++) {
+                TLine* l = new TLine(colMin-0.5+ic, rowMin-0.5,
+                                     colMin-0.5+ic, rowMax+0.5);
+                l->SetLineColor(kBlack); l->SetLineWidth(1); l->SetLineStyle(2);
+                l->Draw("same");
+            }
+            for (int ir = 0; ir <= nRows; ir++) {
+                TLine* l = new TLine(colMin-0.5, rowMin-0.5+ir,
+                                     colMax+0.5, rowMin-0.5+ir);
+                l->SetLineColor(kBlack); l->SetLineWidth(1); l->SetLineStyle(2);
+                l->Draw("same");
+            }
+
+            // ПРОХІД 3: зелені рамки 5×5
+            for (int ix = 0; ix < nCols; ix++) {
+                for (int iy = 0; iy < nRows; iy++) {
+                    if (eps[ix][iy] <= 0.0 || !in5x5(ix, iy)) continue;
+                    TBox* border = new TBox(ix-cellW, iy-cellH, ix+cellW, iy+cellH);
+                    border->SetFillStyle(0);
+                    border->SetLineColor(kGreen+2); border->SetLineWidth(3);
+                    border->Draw("same");
+                }
+            }
+
+            // ПРОХІД 4: маркери джерел
+            // Для кожного джерела i конвертуємо фізичну позицію у display-координати.
+            //   Italian: display_bin_x = wall_idx (= nearest index у uY_neg)
+            //   French:  display_bin_x = nCols-1 - wall_idx (= reversed)
+            //   Обидві: display_bin_y = nearest index у uZ_gid
+            // Використовуємо інтерполяцію (як у draw_efficiencies) для плавної позиції.
+            for (int i = 0; i < nSources; i++) {
+                double sy_i = sd.isPos ? -src_pos[i].first : src_pos[i].first;
+                double sz_i = src_pos[i].second;
+
+                const auto& uY = *sd.uY;
+
+                // Інтерполяція у просторі wall index
+                int ci0 = 0;
+                for (int k = 0; k+1 < (int)uY.size(); k++) {
+                    if (sy_i >= uY[k] && sy_i <= uY[k+1]) { ci0 = k; break; }
+                    if (sy_i < uY[0])     { ci0 = 0;                  break; }
+                    if (sy_i > uY.back()) { ci0 = (int)uY.size()-2;   break; }
+                }
+                double alpha_y = (uY[ci0+1] > uY[ci0])
+                    ? (sy_i - uY[ci0]) / (uY[ci0+1] - uY[ci0]) : 0.0;
+                double wall_idx_f = ci0 + alpha_y;  // дробовий wall index
+
+                // Конвертація у display X:
+                // Italian: cx = wall_idx_f
+                // French:  cx = (nCols-1) - wall_idx_f  (bin 0 = wall 19)
+                double cx = sd.isPos ? (double)(nCols - 1) - wall_idx_f
+                                     : wall_idx_f;
+
+                // Інтерполяція у просторі col index (col 0 знизу, однаково для обох сторін)
+                int ri0 = 0;
+                for (int k = 0; k+1 < (int)uZ_gid.size(); k++) {
+                    if (sz_i >= uZ_gid[k] && sz_i <= uZ_gid[k+1]) { ri0 = k; break; }
+                    if (sz_i < uZ_gid[0])     { ri0 = 0;                      break; }
+                    if (sz_i > uZ_gid.back()) { ri0 = (int)uZ_gid.size()-2;   break; }
+                }
+                double alpha_z = (uZ_gid[ri0+1] > uZ_gid[ri0])
+                    ? (sz_i - uZ_gid[ri0]) / (uZ_gid[ri0+1] - uZ_gid[ri0]) : 0.0;
+                double cy = ri0 + alpha_z;
+
+                bool isCurrent = (i == s);
+                int  mColor    = isCurrent ? kRed : kGray+1;
+
+                TGraph* gm = new TGraph(1, &cx, &cy);
+                gm->SetMarkerStyle(20);
+                gm->SetMarkerSize(isCurrent ? 1.2 : 0.0);
+                gm->SetMarkerColor(mColor);
+                gm->Draw("P same");
+
+                TLatex* lbl = new TLatex(cx + 0.15, cy + 0.15, Form("%d", i));
+                lbl->SetTextSize(isCurrent ? 0.04 : 0.0);
+                lbl->SetTextColor(mColor);
+                lbl->Draw("same");
+            }
+
+            // ПРОХІД 5: числові підписи
+            for (int ix = 0; ix < nCols; ix++) {
+                for (int iy = 0; iy < nRows; iy++) {
+                    if (eps[ix][iy] <= 0.0) continue;
+                    double v    = displayValue(eps[ix][iy], dispMode);
+                    double frac = std::max(0.0, std::min(1.0,
+                                      (v - vMin) / (vMax - vMin)));
+                    std::string lbl = displayLabel(eps[ix][iy], dispMode);
+                    TLatex* lt = new TLatex((double)ix, (double)iy, lbl.c_str());
+                    lt->SetTextAlign(22); lt->SetTextSize(0.03);
+                    lt->SetTextColor(frac > 0.55 ? kBlack : kWhite);
+                    lt->Draw("same");
+                }
+            }
+
+            // Заголовок
+            TLatex ttl;
+            ttl.SetNDC(); ttl.SetTextAlign(22); ttl.SetTextSize(0.038);
+            ttl.DrawLatex(0.5*(1.0-mR+mL), 0.965,
+                Form("Source %d  |  %s  (GID)", s, sd.title));
+
+            // Інфопанель
+            const double infoX1 = 1.0 - mR + 0.015;
+            TPaveText* pvInfo = new TPaveText(infoX1, 0.72, 0.995, 0.91, "NDC");
+            pvInfo->SetFillColor(kWhite); pvInfo->SetBorderSize(1);
+            pvInfo->SetTextAlign(12); pvInfo->SetTextSize(0.026);
+            pvInfo->AddText(Form("N_{true} = %.4e", N_true));
+            pvInfo->AddText(Form("#varepsilon_{%d} = %.3f%%", s, eps_total));
+            pvInfo->AddText(use5x5 ? "(5#times5 window)" : "(all active cells)");
+            pvInfo->AddText(
+                (dispMode == DisplayMode::PERCENT) ? "mode: %" :
+                (dispMode == DisplayMode::LOG10)   ? "mode: log_{10}" : "mode: ppm");
+            pvInfo->Draw("same");
+
+            c->SaveAs(Form("plots/efficiencies_GID/source_%s_%02d_%s.png",
+                           sd.name, s, modeSuffix(dispMode)));
+            delete hFrame;
+            delete c;
+        }
+    }
+
+    if (fEff) {
+        fEff->Close();
+        std::cout << "✓ GID registration efficiencies saved to: " << effRootFile << "\n";
+        std::cout << "  Histograms: eff_GID_pos_src<NN> and eff_GID_neg_src<NN>\n";
+        std::cout << "  Content unit: registration efficiency [%]\n";
+    }
+
+    // Cleanup
+    for (int s = 0; s < nSources; s++) {
+        delete hGID_pos[s];
+        delete hGID_neg[s];
+    }
+
+    std::cout << "GID efficiency maps saved to plots/efficiencies_GID/\n";
+}
+
 
 // ============================================================
 //  Збереження результатів активності у ROOT файл
@@ -593,14 +979,11 @@ void saveActivityResultsToRoot(
     double totalTrue,
     double electron_intens)
 {
-    // Відкриваємо в UPDATE — щоб не затерти eff_*_src* гістограми,
-    // які вже записала draw_efficiencies вище
     TFile* outfile = TFile::Open(outputFile.c_str(), "UPDATE");
     if (!outfile || outfile->IsZombie()) {
         std::cerr << "ERROR: cannot open output file " << outputFile << "\n"; return;
     }
 
-    // ── TTree з результатами для кожного джерела ───────────────────────
     TTree* tResults = new TTree("ActivityResults", "Activity calculation results");
 
     int    source_idx;
@@ -640,7 +1023,6 @@ void saveActivityResultsToRoot(
         tResults->Fill();
     }
 
-    // ── Метаінформація ─────────────────────────────────────────────────
     TNamed* nHalfLife  = new TNamed("HalfLife_years", Form("%f", halfLife_yr));
     TNamed* nDeadTime  = new TNamed("DeadTime_s",     Form("%e", dead_time));
     TNamed* nStartDate = new TNamed("StartDate",
@@ -650,7 +1032,8 @@ void saveActivityResultsToRoot(
     TNamed* nRefDate   = new TNamed("ReferenceDate", "01/07/2018");
     TNamed* nElInt     = new TNamed("ElectronIntensity", Form("%e", electron_intens));
     TNamed* nNote      = new TNamed("EffNote",
-        "eff_pos_srcNN / eff_neg_srcNN = registration efficiency [%] per OM cell");
+        "eff_pos/neg_srcNN = registration eff [%]; "
+        "eff_GID_pos/neg_srcNN = same via GID wall/col");
 
     nHalfLife ->Write("", TObject::kOverwrite);
     nDeadTime ->Write("", TObject::kOverwrite);
@@ -660,7 +1043,6 @@ void saveActivityResultsToRoot(
     nElInt    ->Write("", TObject::kOverwrite);
     nNote     ->Write("", TObject::kOverwrite);
 
-    // ── Підсумкова гістограма ──────────────────────────────────────────
     TH1F* hTotals = new TH1F("Totals", "Total particles and true counts", 2, 0, 2);
     hTotals->SetBinContent(1, totalParticles);
     hTotals->SetBinContent(2, totalTrue);
@@ -673,12 +1055,15 @@ void saveActivityResultsToRoot(
 
     std::cout << "\n✓ Activity results saved to " << outputFile << "\n";
     std::cout << "  Contents:\n";
-    std::cout << "    TTree  'ActivityResults'     — per-source decay data\n";
-    std::cout << "    TH2F   'eff_pos_srcNN'       — registration efficiency, French side [%]\n";
-    std::cout << "    TH2F   'eff_neg_srcNN'       — registration efficiency, Italian side [%]\n";
-    std::cout << "    TNamed 'HalfLife_years' etc. — calculation parameters\n";
-    std::cout << "    TH1F   'Totals'              — total N_particles / N_true\n";
+    std::cout << "    TTree  'ActivityResults'         — per-source decay data\n";
+    std::cout << "    TH2F   'eff_pos_srcNN'           — registration eff, French side [%]\n";
+    std::cout << "    TH2F   'eff_neg_srcNN'           — registration eff, Italian side [%]\n";
+    std::cout << "    TH2F   'eff_GID_pos_srcNN'       — GID registration eff, French side [%]\n";
+    std::cout << "    TH2F   'eff_GID_neg_srcNN'       — GID registration eff, Italian side [%]\n";
+    std::cout << "    TNamed 'HalfLife_years' etc.     — calculation parameters\n";
+    std::cout << "    TH1F   'Totals'                  — total N_particles / N_true\n";
 }
+
 
 // ============================================================
 //  ГОЛОВНА ФУНКЦІЯ
@@ -820,10 +1205,9 @@ void activity()
         test->Close();
     }
 
-    // ── draw_efficiencies: малює PNG і ОДНОЧАСНО пише eff_*_srcNN у ROOT ──
-    //    outputRootFile спочатку створюється тут (RECREATE),
-    //    тому передаємо "RECREATE" — saveActivityResultsToRoot потім додасть
-    //    решту об'єктів через UPDATE.
+    // ── Стандартні карти ефективностей (plots/efficiencies/)
+    //    Перший виклик: RECREATE — створює activity_results.root і записує
+    //    eff_pos_srcNN / eff_neg_srcNN.
     draw_efficiencies(
         results,
         source_positions,
@@ -834,6 +1218,23 @@ void activity()
         electron_intens,
         /*effRootFile=*/outputRootFile,
         /*effRootMode=*/"RECREATE");
+
+    // ── GID-based карти ефективностей (plots/efficiencies_GID/)
+    //    UPDATE — eff_pos_srcNN вже є, додаємо eff_GID_pos_srcNN.
+    //    Потребує hSrcGID_pos_%02d / hSrcGID_neg_%02d у vertex_energy_results.root
+    //    (записує visu_root.C — переконайтесь, що він був перезапущений).
+    draw_efficiencies_GID(
+        results,
+        source_positions,
+        om_positions,
+        "vertex_energy_results.root",
+        /*use5x5=*/false,
+        DisplayMode::PERCENT,
+        electron_intens,
+        /*nWalls_gid=*/20,
+        /*nRows_gid=*/13,
+        /*effRootFile=*/outputRootFile,
+        /*effRootMode=*/"UPDATE");
 
     // ── Записуємо decay-дані та метадані (UPDATE — eff_* вже є) ────────
     saveActivityResultsToRoot(

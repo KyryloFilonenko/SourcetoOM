@@ -167,8 +167,8 @@ void making_root()
     evTree->Branch("z_end",     &z_end,     "z_end/D");
     evTree->Branch("energy",    &energy,    "energy/D");
     
-    evTree->Branch("gid_type",  &gid_type,  "gid_type/S");
-    evTree->Branch("gid_module",&gid_module,"gid_module/S");
+    evTree->Branch("gid_type",   &gid_type);
+    evTree->Branch("gid_module", &gid_module);
     evTree->Branch("gid_side",  &gid_side,  "gid_side/I");
     evTree->Branch("gid_wall",  &gid_wall,  "gid_wall/I");
     evTree->Branch("gid_column",&gid_column,"gid_column/I");
@@ -185,7 +185,7 @@ void making_root()
     // --- Головний цикл ---
     Long64_t nentries  = t->GetEntries();
     Long64_t maxEvents = nentries;
-    // Long64_t maxEvents = std::min(nentries, (Long64_t)10000);  // для тесту
+    // Long64_t maxEvents = std::min(nentries, (Long64_t)100);  // для тесту
 
     std::cout << "Processing " << maxEvents << " entries..." << std::endl;
 
@@ -198,6 +198,8 @@ void making_root()
 
         MiPTD* ptd    = Eve->getPTD();
         int    nParts = Eve->getPTDNoPart();
+
+        MiCD* cd = Eve->getCD();
 
         for(int ip = 0; ip < nParts; ip++)
         {
@@ -237,9 +239,20 @@ void making_root()
                 // Енергія
                 double e = hit->getE();
                 energy = (!std::isnan(e)) ? e : -1.0;
+                
+                int right_cd = 0;
+                for(int i = 0; i < cd->getnoofcaloh(); i++)
+                {
+                    if((abs(cd->getcalohit(i)->getE() - e) < 1e-5)&&(abs(cd->getcalohit(i)->gett() - hit->gett()) < 1e-5))
+                    {
+                        right_cd = i;
+                        break;
+                    }
+                }
+                MiCDCaloHit* hit_cd = cd->getcalohit(right_cd);
 
                 // GID — getGID() повертає MiGID об'єкт (не pointer)
-                MiGID* gid = hit->getGID();
+                MiGID* gid = hit_cd->getGID();
 
                 gid_type   = gid->gettype();
                 gid_module   = gid->getmodule();
