@@ -1,0 +1,8 @@
+build/
+lib/
+testing_products/
+
+src/dicts/
+
+simu.conf
+variant.profile
